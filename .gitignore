@@ -1,0 +1,19 @@
+# Python Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Deep Learning Datasets (Do not push raw training data)
+model_training/data/raw/
+model_training/data/input/
+
+
+# OS System Files
+.DS_Store
+Thumbs.db
