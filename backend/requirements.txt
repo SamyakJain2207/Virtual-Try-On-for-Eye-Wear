@@ -1,0 +1,24 @@
+# --- Web Server & API (backend.py) ---
+fastapi
+uvicorn
+python-multipart
+pydantic
+
+# --- Computer Vision & ML Core ---
+numpy
+opencv-python
+tensorflow
+mediapipe
+
+# --- Data Processing & Model Training (train.py) ---
+pandas
+scikit-learn
+tqdm
+Pillow
+
+# --- Jupyter/Interactive Tools ---
+ipython
+ipywidgets
+
+# --- Specific Version Requirements ---
+protobuf==3.20.3
