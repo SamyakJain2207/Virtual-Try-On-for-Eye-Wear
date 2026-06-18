@@ -8,7 +8,7 @@ pydantic
 numpy
 opencv-python
 tensorflow
-mediapipe
+mediapipe==0.10.14
 
 # --- Data Processing & Model Training (train.py) ---
 pandas

@@ -13,7 +13,6 @@ __pycache__/
 model_training/data/raw/
 model_training/data/input/
 
-
 # OS System Files
 .DS_Store
 Thumbs.db

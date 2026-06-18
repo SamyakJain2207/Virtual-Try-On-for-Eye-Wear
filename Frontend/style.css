@@ -107,7 +107,7 @@ body {
     pointer-events: none;
 }
 
-canvas.mirror { transform: scaleX(-1); }
+.mirror { transform: scaleX(-1); }
 
 /* Mode Pill */
 .mode-pill {
@@ -232,3 +232,23 @@ input[type=range]::-webkit-slider-runnable-track {
 /* Right Panel Scrollbar */
 .right-sidebar ::-webkit-scrollbar { width: 4px; }
 .right-sidebar ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 4px; }
+
+/* Custom Animations */
+@keyframes slideIn {
+    from { transform: translateX(100%); }
+    to { transform: translateX(0); }
+}
+
+@keyframes bounceIn {
+    0% { transform: scale(0.9); opacity: 0; }
+    50% { transform: scale(1.05); opacity: 0.8; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.animate-slide-in {
+    animation: slideIn 0.3s ease-out forwards;
+}
+
+.animate-bounce-in {
+    animation: bounceIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}

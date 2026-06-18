@@ -232,7 +232,7 @@ if os.path.exists(LABELS_MANUAL):
     def parse_fn(path, label):
         image = tf.io.read_file(path)
         image = tf.image.decode_jpeg(image, channels=3)
-        image = tf.image.convert_image_dtype(image, tf.float32)
+        image = tf.cast(image, tf.float32)
         image = tf.image.resize(image, IMG_SIZE_SMALL)
         return image, label
 
@@ -283,7 +283,7 @@ if os.path.exists(SAVE_SMALL_MODEL):
             img = tf.io.read_file(path)
             img = tf.image.decode_jpeg(img, channels=3)
             img = tf.image.resize(img, IMG_SIZE_SMALL)
-            img = tf.expand_dims(img, 0) / 255.0
+            img = tf.cast(tf.expand_dims(img, 0), tf.float32)
 
             preds = model.predict(img, verbose=0)[0]
             idx = int(np.argmax(preds))
@@ -340,7 +340,7 @@ else:
 # ==========================================
 from tensorflow.keras.applications import EfficientNetB3
 
-SAVE_FINAL_MODEL = os.path.join(MODELS_DIR, "effnet_b3_final.h5")
+SAVE_FINAL_MODEL = os.path.join(MODELS_DIR, "face_shape_model_final.h5")
 IMG_SIZE_FINAL = (300, 300)
 EPOCHS_FINAL = 15
 
@@ -358,7 +358,7 @@ if os.path.exists(LABELS_MERGED):
     def parse_fn_final(path, label):
         image = tf.io.read_file(path)
         image = tf.image.decode_jpeg(image, channels=3)
-        image = tf.image.convert_image_dtype(image, tf.float32)
+        image = tf.cast(image, tf.float32)
         image = tf.image.resize(image, IMG_SIZE_FINAL)
         return image, label
 
@@ -402,5 +402,12 @@ if os.path.exists(LABELS_MERGED):
 
     model.fit(train_ds, validation_data=val_ds, epochs=6, callbacks=callbacks)
     print("Fully Fine-tuned model saved to:", SAVE_FINAL_MODEL)
+    
+    # Copy final model to backend directory
+    backend_model_dir = os.path.join(os.path.dirname(BASE_DIR), "backend")
+    backend_model_path = os.path.join(backend_model_dir, "face_shape_model_final.h5")
+    if os.path.exists(backend_model_dir):
+        shutil.copy(SAVE_FINAL_MODEL, backend_model_path)
+        print(f"✅ Copied final model to backend: {backend_model_path}")
 else:
     print("Merged labels not found. Run the merging step first.")

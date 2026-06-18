@@ -1,3 +1,4 @@
+/* @jsxRuntime classic */
 const { useState, useEffect, useRef } = React;
 
 const BACKEND_URL = "http://localhost:8000";
@@ -19,6 +20,18 @@ const GLASSES_DB = [
     { id: "Square Tortoise", src: "./frames/tortoiseshellWhite_square.png", name: "Two-Tone Square", price: 145, color: "bg-blue" }
 ];
 
+// Helper to resolve recommendations client-side to ensure UI consistency during smoothing/mode changes
+const getRecommendationsForShape = (shape) => {
+    const s = shape.trim().toLowerCase();
+    if (s === "oval") return ["Aviator", "Wayfarer", "Square Thick", "Round Thin"];
+    if (s === "round") return ["Square Thick", "Wayfarer", "Square Tortoise", "Black Gold"];
+    if (s === "square") return ["Round Gold", "Aviator", "Classic Round", "Sun Round"];
+    if (s === "heart") return ["Aviator", "Round Gold", "Round Thin", "Sun Aviator"];
+    if (s === "oblong") return ["Square Thick", "Wayfarer", "Black Gold", "Square Tortoise"];
+    if (s === "diamond") return ["Classic Round", "Round Thin", "CatEye Tortoise", "CatEye White"];
+    return ["Wayfarer", "Aviator"];
+};
+
 const App = () => {
     // --- STATE ---
     const [mode, setMode] = useState('live'); 
@@ -28,6 +41,8 @@ const App = () => {
     
     const [activeGlassId, setActiveGlassId] = useState("Aviator");
     const [activeTab, setActiveTab] = useState("all"); 
+    const [searchQuery, setSearchQuery] = useState("");
+    const [isSearchOpen, setIsSearchOpen] = useState(false);
     
     const [adjustments, setAdjustments] = useState({ scale: 1.0, x: 0, y: 0 });
     const [pdList, setPdList] = useState([]); 
@@ -46,6 +61,11 @@ const App = () => {
     const adjustmentsRef = useRef({ scale: 1.0, x: 0, y: 0 }); 
     const lastAnalysisTimeRef = useRef(0);
     const lastFrameTimeRef = useRef(0); 
+    const lastPdUpdateTimeRef = useRef(0);
+    const onResultsRef = useRef(null);
+    const predictionsHistoryRef = useRef([]);
+    const smoothedPdRef = useRef({});
+    const lastFacePositionRef = useRef(null);
     
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
@@ -74,10 +94,22 @@ const App = () => {
     const handleGlassSelect = (id) => {
         setActiveGlassId(id);
         activeGlassRef.current = id; 
-        if (mode === 'upload' && uploadedImage) faceMeshRef.current.send({image: uploadedImage});
+        if (mode === 'upload' && uploadedImage && faceMeshRef.current) faceMeshRef.current.send({image: uploadedImage});
     };
 
-    useEffect(() => { adjustmentsRef.current = adjustments; if (mode === 'upload' && uploadedImage) faceMeshRef.current.send({image: uploadedImage}); }, [adjustments]);
+    useEffect(() => { adjustmentsRef.current = adjustments; if (mode === 'upload' && uploadedImage && faceMeshRef.current) faceMeshRef.current.send({image: uploadedImage}); }, [adjustments]);
+
+    // Keep onResultsRef current on every render
+    useEffect(() => {
+        onResultsRef.current = onResults;
+    });
+
+    // Automatically refresh Lucide icons whenever the component updates
+    useEffect(() => {
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    });
 
     useEffect(() => {
         fetch(BACKEND_URL)
@@ -86,7 +118,9 @@ const App = () => {
     }, []);
 
     // --- 3. Initialize MediaPipe (Optimized) ---
+    // Initialize FaceMesh once on mount
     useEffect(() => {
+        console.log("Initializing FaceMesh...");
         const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
         
         faceMesh.setOptions({ 
@@ -96,16 +130,33 @@ const App = () => {
             minTrackingConfidence: 0.5 
         });
         
-        faceMesh.onResults(onResults);
+        faceMesh.onResults((results) => {
+            if (onResultsRef.current) {
+                onResultsRef.current(results);
+            }
+        });
         faceMeshRef.current = faceMesh;
 
-        if(mode === 'live' && videoRef.current) {
+        return () => {
+            console.log("Cleaning up FaceMesh...");
+            if (faceMeshRef.current) {
+                faceMeshRef.current.close();
+            }
+        };
+    }, []);
+
+    // Manage camera lifecycle based on mode and video element
+    useEffect(() => {
+        if (mode === 'live' && videoRef.current && faceMeshRef.current) {
+            console.log("Starting Camera...");
             const camera = new Camera(videoRef.current, {
                 onFrame: async () => { 
                     const now = Date.now();
                     if (now - lastFrameTimeRef.current > 30) {
                         lastFrameTimeRef.current = now;
-                        await faceMesh.send({image: videoRef.current});
+                        if (faceMeshRef.current) {
+                            await faceMeshRef.current.send({image: videoRef.current});
+                        }
                     }
                 },
                 width: 640, height: 480
@@ -113,10 +164,20 @@ const App = () => {
             camera.start();
             cameraRef.current = camera;
         } else {
-            if(cameraRef.current) cameraRef.current.stop();
+            if (cameraRef.current) {
+                console.log("Stopping Camera...");
+                cameraRef.current.stop();
+                cameraRef.current = null;
+            }
         }
-        return () => { if(cameraRef.current) cameraRef.current.stop(); }
-    }, [mode]);
+        return () => {
+            if (cameraRef.current) {
+                console.log("Stopping Camera (Cleanup)...");
+                cameraRef.current.stop();
+                cameraRef.current = null;
+            }
+        };
+    }, [mode, videoRef.current]);
 
     // --- 4. Render Loop ---
     const onResults = (results) => {
@@ -139,22 +200,46 @@ const App = () => {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.save();
         
-        if (mode === 'live') {
-            ctx.scale(-1, 1);
-            ctx.translate(-canvas.width, 0);
-        }
-
+        // Let CSS handle horizontal mirroring to prevent inverted rotation angles and adjustments.
         ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
 
         if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
             const currentPdValues = [];
             
+            // Track face position jumps to detect a new person or tracking reset
+            const mainFace = results.multiFaceLandmarks[0];
+            const noseBridge = mainFace[168];
+            if (noseBridge) {
+                const prevPos = lastFacePositionRef.current;
+                const currentPos = { x: noseBridge.x, y: noseBridge.y };
+                if (prevPos) {
+                    const dist = Math.sqrt(Math.pow(currentPos.x - prevPos.x, 2) + Math.pow(currentPos.y - prevPos.y, 2));
+                    // A jump of more than 15% of screen size indicates a new person or seat change
+                    if (dist > 0.15) {
+                        console.log("Face tracking jump detected. Resetting prediction history.");
+                        predictionsHistoryRef.current = [];
+                        smoothedPdRef.current = {};
+                    }
+                }
+                lastFacePositionRef.current = currentPos;
+            }
+
             // Iterate through ALL detected faces
-            results.multiFaceLandmarks.forEach((landmarks) => {
+            results.multiFaceLandmarks.forEach((landmarks, faceIdx) => {
                 // 1. Calculate PD for THIS specific face
                 const val = calculateSinglePD(landmarks, results.image.width, results.image.height);
                 if (val && !isNaN(val)) {
-                    currentPdValues.push(val);
+                    // Apply Exponential Moving Average (EMA) smoothing to filter frame jitter
+                    const prevVal = smoothedPdRef.current[faceIdx];
+                    let smoothedVal = val;
+                    if (prevVal !== undefined) {
+                        // alpha = 0.1 for high visual stability while adapting smoothly to movement
+                        smoothedVal = 0.1 * val + 0.9 * prevVal;
+                    }
+                    smoothedPdRef.current[faceIdx] = smoothedVal;
+                    
+                    const finalPd = Math.round(smoothedVal * 10) / 10;
+                    currentPdValues.push(finalPd);
                 }
                 
                 // 2. Draw glasses for THIS specific face
@@ -165,12 +250,18 @@ const App = () => {
                 }
             });
 
-            // FORCE UPDATE PD LIST
-            if (mode === 'upload' || Math.random() > 0.8) {
+            // Throttled PD list update to prevent rapid UI thrashing/re-renders
+            const pdNow = Date.now();
+            if (mode === 'upload' || pdNow - lastPdUpdateTimeRef.current > 500) {
+                 lastPdUpdateTimeRef.current = pdNow;
                  setPdList(currentPdValues);
             }
         } else { 
             setPdList([]); 
+            // Reset state when no faces are in the frame
+            lastFacePositionRef.current = null;
+            predictionsHistoryRef.current = [];
+            smoothedPdRef.current = {};
         }
         
         ctx.restore();
@@ -205,8 +296,26 @@ const App = () => {
                 const res = await fetch(`${BACKEND_URL}/analyze_face`, { method: 'POST', body: fd });
                 if(res.ok) {
                     const data = await res.json();
-                    setFaceShape(data.face_shape);
-                    setRecommendations(data.recommended_frames);
+                    
+                    // Filter: temporal majority vote to smooth out single-frame prediction flips
+                    predictionsHistoryRef.current.push(data.face_shape);
+                    if (predictionsHistoryRef.current.length > 7) {
+                        predictionsHistoryRef.current.shift();
+                    }
+                    
+                    const counts = {};
+                    let maxCount = 0;
+                    let majorityShape = data.face_shape;
+                    predictionsHistoryRef.current.forEach(shape => {
+                        counts[shape] = (counts[shape] || 0) + 1;
+                        if (counts[shape] > maxCount) {
+                            maxCount = counts[shape];
+                            majorityShape = shape;
+                        }
+                    });
+                    
+                    setFaceShape(majorityShape);
+                    setRecommendations(getRecommendationsForShape(majorityShape));
                     setBackendStatus('online');
                 }
             } catch (err) { setBackendStatus('offline'); }
@@ -225,7 +334,6 @@ const App = () => {
         const scaleWidth = (faceWidth * 1.1) * adj.scale; 
         const imgAspect = imgObj.width / imgObj.height; const scaleHeight = scaleWidth / imgAspect;
         ctx.save(); ctx.translate(nx + adj.x, ny + adj.y); ctx.rotate(angle);
-        if(mode === 'live') ctx.scale(-1, 1);
         ctx.drawImage(imgObj, -scaleWidth / 2, -scaleHeight / 2 + (scaleHeight * 0.1), scaleWidth, scaleHeight);
         ctx.restore();
     };
@@ -243,6 +351,8 @@ const App = () => {
         setCompareImage(null); // Reset compare mode
         setFaceShape("Analyzing..."); 
         setPdList([]);
+        predictionsHistoryRef.current = [];
+        smoothedPdRef.current = {};
         
         console.log("File selected:", file.name);
 
@@ -268,7 +378,9 @@ const App = () => {
                 ctx.clearRect(0,0, canvas.width, canvas.height);
                 ctx.drawImage(img, 0, 0);
             }
-            await faceMeshRef.current.send({image: img});
+            if (faceMeshRef.current) {
+                await faceMeshRef.current.send({image: img});
+            }
         };
     };
 
@@ -321,10 +433,15 @@ const App = () => {
 
     // --- SORTING ---
     const getFilteredFrames = () => {
+        let frames = GLASSES_DB;
         if (activeTab === 'rec') {
-            return GLASSES_DB.filter(g => recommendations.includes(g.id));
+            frames = GLASSES_DB.filter(g => recommendations.includes(g.id));
         }
-        return GLASSES_DB; 
+        if (searchQuery.trim() !== "") {
+            const query = searchQuery.toLowerCase();
+            frames = frames.filter(g => g.name.toLowerCase().includes(query) || g.id.toLowerCase().includes(query));
+        }
+        return frames;
     };
 
     const displayFrames = getFilteredFrames();
@@ -339,7 +456,25 @@ const App = () => {
                     <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">SpexUP</span>
                 </div>
                 <div className="flex gap-4 text-gray-400 items-center">
-                    <i data-lucide="search" className="w-5 h-5 hover:text-white cursor-pointer"></i>
+                    <div className="flex items-center gap-2">
+                        {isSearchOpen && (
+                            <input 
+                                type="text"
+                                placeholder="Search frames..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="bg-slate-800 text-white text-xs px-3 py-1.5 rounded-lg border border-slate-700 focus:outline-none focus:border-blue-500 w-36 transition-all duration-300 animate-slide-in"
+                            />
+                        )}
+                        <i 
+                            data-lucide="search" 
+                            className={`w-5 h-5 hover:text-white cursor-pointer ${isSearchOpen ? 'text-white' : ''}`}
+                            onClick={() => {
+                                setIsSearchOpen(!isSearchOpen);
+                                if (isSearchOpen) setSearchQuery("");
+                            }}
+                        ></i>
+                    </div>
                     
                     {/* Cart Icon with Badge */}
                     <div className="relative cursor-pointer" onClick={() => setIsCartOpen(!isCartOpen)}>
@@ -459,7 +594,7 @@ const App = () => {
                         <div className={`relative transition-all duration-300 ${compareImage ? 'flex w-full h-full gap-2 p-2' : 'w-full h-full'}`}>
                             {compareImage && (
                                 <div className="flex-1 relative border border-slate-600 rounded-2xl overflow-hidden bg-black/80">
-                                    <img src={compareImage} className="w-full h-full object-contain" />
+                                    <img src={compareImage} className={`w-full h-full object-contain ${mode==='live'?'mirror':''}`} />
                                     <div className="absolute top-4 left-4 bg-black/60 px-3 py-1 rounded-full text-xs text-white border border-white/20">Saved Look</div>
                                 </div>
                             )}
@@ -566,4 +701,4 @@ const App = () => {
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
 
-setTimeout(() => { lucide.createIcons(); }, 100);
+// Lucide icons are handled dynamically inside a render useEffect hook.
